@@ -27,7 +27,7 @@
     - [ ] Configure PowerSync for offline-first sync
     - [x] Build Electron wrapper base for POS integration
     - [x] Build Core Packages (Database Client, Shared Types)
-    - [x] Git Initialization & GitHub Push
+    - [/] Git Initialization & GitHub Push
 - [ ] Phase 6: Frontend & Domain Implementation
     - [ ] Implement Supabase Auth with MFA
     - [ ] Implement Onboarding Wizard (Niche Selection, Branding/Theme)

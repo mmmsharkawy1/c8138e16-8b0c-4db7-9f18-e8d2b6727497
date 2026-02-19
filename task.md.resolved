@@ -20,28 +20,24 @@
     - [x] Add Tenant Validation (Security Enhancement)
     - [x] Schema Optimization (unit_id in reservations, JWT-cached roles)
     - [x] User Review & Approval
-- [/] Phase 5: Monorepo & Core Infrastructure Setup
-    - [/] Initialize Turborepo structure
+- [x] Phase 5: Monorepo & Core Infrastructure Setup
+    - [x] Initialize Turborepo structure (Apps: dashboard, pos; Packages: shared, database)
     - [x] Setup Supabase Project & Apply Schema (including SaaS governance + Niche Templates + Bundles)
-    - [ ] Seed Niche Templates (Clothing, Auto Parts, FMCG)
+    - [ ] Seed Niche Templates (Clothing, Auto Parts, FMCG) [In Progress - Tables Ready]
     - [ ] Configure PowerSync for offline-first sync
-    - [/] Build Electron wrapper for POS hardware integration
-    - [/] Build Core Package (Database Client, Services, Types)
+    - [x] Build Electron wrapper base for POS integration
+    - [x] Build Core Packages (Database Client, Shared Types)
+    - [x] Git Initialization & GitHub Push
+- [ ] Phase 6: Frontend & Domain Implementation
     - [ ] Implement Supabase Auth with MFA
     - [ ] Implement Onboarding Wizard (Niche Selection, Branding/Theme)
     - [ ] Implement Bundle Sales Logic
     - [ ] Implement SaaS Governance (Subscriptions, Limits, Feature Flags)
     - [ ] Create Event Bus for real-time updates
+- [ ] Phase 7: Verification & Testing
     - [ ] Write Unit Tests for Core Functions
     - [ ] Verify RLS Tenant Isolation & Subscription Limits
-- [ ] Modules (Pluggable)
-    - [ ] Dashboard Module (Apps/Packages)
-    - [ ] POS Module (Offline-first / IndexedDB)
-    - [ ] Storefront Module (B2B workflow)
-    - [ ] Localization & Tax Module
-- [ ] Verification & Deployment
-    - [ ] Test Tenant Isolation (Strict RLS)
-    - [ ] Multi-unit conversion testing
+    - [ ] Test Multi-unit conversion
 - [ ] Phase 8: AI & Automation (Future)
     - [ ] AI Merchant Assistant
     - [ ] Customer Support Chatbot
