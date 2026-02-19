@@ -1,0 +1,57 @@
+# Implementation Plan: Modular Wholesale SaaS Platform
+
+Building a professional, scalable, and modular commerce platform for wholesalers. This isn't just a POS; it's a "Wholesale Commerce Platform" built for long-term scaling and international markets.
+
+## Core Principles
+- **Modular & Pluggable**: Core system is stable; features (POS, Storefront, etc.) are modules.
+- **Strict Tenant Isolation**: Supabase RLS + `tenant_id` on all business tables.
+- **International Ready**: Currency, tax, and timezone support baked into the core.
+- **Event-Driven**: Core emits events (`order.created`, etc.) for modules to consume.
+
+## Technical Architecture
+
+### Tech Stack
+- **Framework**: Next.js 14+ (App Router)
+- **Backend/Auth**: Supabase (Postgres with RLS, Realtime)
+- **Monorepo Structure**: (Preferred) Separating `apps/dashboard`, `apps/storefront`, `packages/core`, `packages/ui`.
+- **Offline POS**: IndexedDB + sync queue.
+
+## Proposed Changes
+
+### 1. Core Architecture [NEW]
+- **Tenant Management**: Metadata, subdomain mapping, feature flags (plans).
+- **Identity & RBAC**: Owner, Manager, Cashier, Accountant roles.
+- **Event Bus**: Internal event system for core-to-module communication.
+
+### 2. Product & Inventory Engine [NEW]
+- **Abstract Products**: Support for variegated industries (Clothing, Food, Tools).
+- **Variant Model**: JSONB attributes for infinite flexibility (size, color, weight).
+- **Multi-Unit System**: Piece, Dozen, Carton with conversion rates.
+- **Multi-Location Inventory**: Warehouses, Branches, and Vans support.
+
+### 3. Pricing & Rules Engine [NEW]
+- **Wholesale Tiers**: Gold/Silver/Bronze customer groups.
+- **Quantity-based rules**: Automatically apply discounts based on volume and unit type.
+
+### 4. Modules (Pluggable)
+- **POS Module**: Offline-first UI, barcode scan, partial payments.
+- **Storefront Module**: B2B flow (Login required, MOQ, Customer Approval).
+- **Localization Module**: Tax engines, multi-currency formatting.
+
+## Database Schema (High-Level)
+- `tenants`: id, subdomain, plan, settings
+- `products`: id, tenant_id, type, base_sku
+- `product_variants`: id, product_id, attributes (JSONB)
+- `product_units`: id, variant_id, unit_type, conversion_rate, price_rules (JSONB)
+- `inventory_levels`: id, variant_id, location_id, quantity, unit_id
+- `locations`: id, tenant_id, name, type (Warehouse/Branch/Van)
+
+## Verification Plan
+
+### Automated Tests
+- **RLS Verification**: Ensure Tenant A can NEVER access Tenant B data via API or DB.
+- **Unit Conversion Logic**: Verify conversion rates between nested units (e.g., 1 Carton -> 12 Dozen -> 144 Pieces).
+
+### Manual Verification
+- **POS Offline Test**: Simulate network failure and verify data persistence in IndexedDB.
+- **Multi-tenant Routing**: Verify subdomain isolation in a local dev environment.

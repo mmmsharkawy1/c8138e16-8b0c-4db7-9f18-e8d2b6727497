@@ -1,0 +1,5 @@
+{
+  "artifactType": "ARTIFACT_TYPE_OTHER",
+  "summary": "Architecture Decision Records (ADR) documenting all major technical decisions made during TAGER ERP development, including authentication strategy, niche templates, dynamic bundles, offline-first architecture, and SaaS governance model.",
+  "updatedAt": "2026-02-09T14:08:47.856556600Z"
+}

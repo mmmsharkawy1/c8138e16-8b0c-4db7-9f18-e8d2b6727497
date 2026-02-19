@@ -1,0 +1,174 @@
+# ANTI-GRAVITY SYSTEMS MASTER FRAMEWORK v2.0
+**TAGER ERP Edition - Certified 2026-02-10**
+
+---
+
+## A) Executive Summary
+
+**Purpose:** إطار شامل لتشغيل وإدارة وتنسيق جميع مراحل بناء TAGER ERP (Enterprise SaaS + Offline POS + Multi-Niche Support).
+
+**Scope:** يشمل المعمارية، التنفيذ، قواعد التعاون بين AI Agents، وتنسيق الإنتاج.
+
+**Core Principles:**
+1. **Consistency First** - نفس الأنماط عبر كل الكود
+2. **Single Source of Truth** - Database هو المرجع الوحيد
+3. **AI-Coordinated Execution** - Claude (Architect) + Gemini (PM) + Codeium (Dev)
+4. **Zero-Ambiguity Outputs** - كل مخرج له Acceptance Criteria واضحة
+5. **Phase-Driven Development** - كل مرحلة لها Gate Checks
+
+---
+
+## B) Architecture Master Framework
+
+### 1. System Layers (6 Layers)
+
+```
+┌─────────────────────────────────────────┐
+│  6. UX Orchestration Layer              │  Onboarding, Niche Wizards
+├─────────────────────────────────────────┤
+│  5. SaaS Governance Layer               │  Plans, Limits, Feature Flags
+├─────────────────────────────────────────┤
+│  4. POS Native Layer                    │  Electron, Hardware APIs
+├─────────────────────────────────────────┤
+│  3. Application Layer                   │  Next.js 14 + Turborepo
+├─────────────────────────────────────────┤
+│  2. Sync Layer                          │  PowerSync (Offline-First)
+├─────────────────────────────────────────┤
+│  1. Data Layer                          │  Supabase + SQL + RLS
+└─────────────────────────────────────────┘
+```
+
+### 2. Migration Pipeline (STRICT ORDER)
+
+```sql
+supabase/migrations/
+├── 001_core_schema.sql              -- 22 tables
+├── 002_seed_niche_templates.sql     -- 3 business types
+├── 003_rls_policies.sql             -- 28 security policies
+├── 004_saas_governance.sql          -- Limit enforcement functions
+├── 005_core_functions.sql           -- 9 inventory/sales functions
+├── 006_bundle_functions.sql         -- sell_bundle()
+└── 007_seed_subscription_plans.sql  -- 4 pricing tiers
+```
+
+### 3. Folder Structure Standard
+
+```
+wholesale-platform/
+├── apps/
+│   ├── dashboard/          # Merchant Management
+│   ├── pos/                # POS PWA + Electron
+│   └── storefront/         # B2B Portal
+├── packages/
+│   ├── core/               # Supabase Client, Services
+│   ├── shared/             # Types, Schemas
+│   └── ui/                 # Shadcn Components
+├── supabase/migrations/    # 7 SQL files
+├── electron/               # Hardware Wrapper
+└── docs/                   # ADRs, Guides
+```
+
+---
+
+## C) AI Coordination Protocol
+
+### Agent Roles
+
+| Agent | Role | Responsibilities |
+|-------|------|------------------|
+| **Claude** | Architect | Schema, RLS, Functions, ADRs |
+| **Gemini** | PM & QA | Tasks, Tests, User Stories |
+| **Codeium** | Developer | TypeScript, React, APIs |
+| **Lovable/V0** | UI Designer | Premium UI Mockups |
+| **Mistral** | Security | RLS Audits, SQL Injection |
+| **DeepSeek** | Performance | Load Tests, Benchmarks |
+
+### Communication Rules
+
+1. Structured Outputs Only
+2. Use Blueprint Format
+3. Tag Ownership
+4. Version Everything
+5. Cross-Reference Documents
+
+---
+
+## D) Output Standards
+
+### Naming Conventions
+
+- SQL: `snake_case`
+- Folders: `kebab-case`
+- Types: `PascalCase`
+- Variables: `camelCase`
+
+### UI Standards (CRITICAL)
+
+- Shadcn UI only
+- Tailwind CSS (no inline styles)
+- Premium design (wow factor)
+- Dark mode support
+- Mobile-first
+
+---
+
+## E) Phase System
+
+### Phase 0: Foundation ✅ COMPLETE
+- Schema, RLS, Functions, Governance
+
+### Phase 1: Infrastructure ⏳ NEXT
+- Supabase, Migrations, MFA
+
+### Phase 2: Monorepo & Sync
+- Turborepo, PowerSync
+
+### Phase 3: Onboarding UI
+- Wizard, Niche Selection
+
+### Phase 4: POS Application
+- Electron, Hardware
+
+### Phase 5: Bundles
+- Bundle Builder UI
+
+### Phase 6: Testing
+- E2E, Security, Load Tests
+
+### Phase 7: Launch
+- Documentation, Deployment
+
+---
+
+## F) Quality Framework
+
+### Code Review Checklist
+- TypeScript strict mode
+- No console.logs
+- RLS verified
+- Tests passing
+
+### Security Checklist
+- RLS on all tables
+- MFA for owners
+- No SQL injection
+- Rate limiting
+
+---
+
+## G) TAGER Specifics
+
+### Niche Support
+- Clothing, Auto Parts, FMCG
+- JSONB schemas
+
+### Offline-First
+- 100% POS uptime
+- PowerSync sync
+- SQLite < 100MB
+
+---
+
+**Status:** ✅ CERTIFIED  
+**Version:** 2.0  
+**Date:** 2026-02-10

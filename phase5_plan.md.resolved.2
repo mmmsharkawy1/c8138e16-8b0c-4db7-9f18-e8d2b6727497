@@ -1,0 +1,312 @@
+# Phase 5: Enterprise SaaS Infrastructure
+
+## 📋 Overview
+
+| Item | Value |
+|------|-------|
+| **Objective** | Production-ready SaaS platform with offline-first POS and subscription management |
+| **Duration** | 5-7 days |
+| **Tech Stack** | Turborepo, Next.js 14, Supabase, PowerSync, Electron |
+
+---
+
+## 🏗️ Technical Architecture
+
+### Monorepo Structure
+```
+wholesale-platform/
+├── apps/
+│   ├── dashboard/          # Next.js (Merchant Management)
+│   ├── pos/                # Next.js PWA + Electron (Hardware Integration)
+│   └── storefront/         # Next.js (B2B Portal)
+├── packages/
+│   ├── core/               # Supabase Client, Services, PowerSync Config
+│   ├── shared/             # Types, Schemas, Constants
+│   └── ui/                 # Shadcn Components
+├── supabase/
+│   ├── migrations/         # SQL Schema Files
+│   └── seed/               # Test Data
+└── electron/               # POS Native Wrapper
+```
+
+### Key Technologies
+
+#### 1. **PowerSync (Offline-First Sync Engine)**
+- **Purpose**: Client-server replication with local SQLite cache
+- **Conflict Resolution**: Last-Write-Wins (LWW) with server authority
+- **Architecture**:
+  ```
+  Supabase (PostgreSQL) 
+    ↕ PowerSync Service
+    ↕ Client (SQLite + React Query)
+  ```
+
+#### 2. **Electron Wrapper (POS Hardware Integration)**
+- **Purpose**: Access native APIs for thermal printers, barcode scanners, cash drawers
+- **Stack**: Next.js PWA wrapped in Electron
+- **Hardware Support**:
+  - ESC/POS thermal printers (USB/Network)
+  - USB barcode scanners
+  - Cash drawer triggers
+
+#### 3. **SaaS Governance Module**
+- **Subscription Plans**: Free, Silver, Gold, Enterprise
+- **Feature Flags**: Per-tenant feature toggles
+- **Tenant Limits**: Enforced via RLS policies
+
+---
+
+## 📦 Step 1: Monorepo Setup
+
+```bash
+# Initialize Turborepo
+npx create-turbo@latest wholesale-platform
+cd wholesale-platform
+
+# Install dependencies
+pnpm add @supabase/supabase-js @powersync/web zod
+pnpm add -D electron electron-builder
+```
+
+---
+
+## ☁️ Step 2: Supabase + PowerSync
+
+### 2.1 Supabase Project
+1. Create project at [supabase.com](https://supabase.com)
+2. Apply migrations:
+```bash
+supabase/migrations/
+├── 001_schema.sql          # core_schema.sql
+├── 002_rls.sql             # rls_policies.sql
+├── 003_functions.sql       # core_functions.sql
+└── 004_saas_governance.sql # saas_governance.sql
+```
+
+### 2.2 PowerSync Configuration
+```typescript
+// packages/core/src/sync/powersync.ts
+import { PowerSyncDatabase } from '@powersync/web';
+
+export const db = new PowerSyncDatabase({
+  schema: {
+    products: {
+      id: 'TEXT PRIMARY KEY',
+      name: 'TEXT',
+      price: 'REAL',
+      // ... other fields
+    },
+    orders: { /* ... */ },
+    stock_levels: { /* ... */ },
+  },
+  database: {
+    dbFilename: 'wholesale.db',
+  },
+});
+
+// Connect to PowerSync service
+await db.connect({
+  powerSyncUrl: 'https://your-powersync-instance.com',
+  token: supabaseSession.access_token,
+});
+```
+
+### 2.3 Sync Rules (PowerSync Backend)
+```yaml
+# sync-rules.yaml
+bucket_definitions:
+  tenant_data:
+    parameters:
+      - SELECT tenant_id FROM profiles WHERE id = token_parameters.user_id
+    data:
+      - SELECT * FROM products WHERE tenant_id = bucket.tenant_id
+      - SELECT * FROM orders WHERE tenant_id = bucket.tenant_id
+      - SELECT * FROM stock_levels WHERE tenant_id = bucket.tenant_id
+```
+
+---
+
+## 🖥️ Step 3: POS Electron Wrapper
+
+### 3.1 Electron Main Process
+```javascript
+// electron/main.js
+const { app, BrowserWindow, ipcMain } = require('electron');
+const escpos = require('escpos');
+
+let mainWindow;
+
+app.whenReady().then(() => {
+  mainWindow = new BrowserWindow({
+    width: 1024,
+    height: 768,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+    },
+  });
+
+  mainWindow.loadURL('http://localhost:3000'); // Next.js dev server
+});
+
+// Hardware Integration
+ipcMain.handle('print-receipt', async (event, receiptData) => {
+  const device = new escpos.USB();
+  const printer = new escpos.Printer(device);
+  
+  device.open(() => {
+    printer
+      .text(receiptData.header)
+      .text(receiptData.items)
+      .cut()
+      .close();
+  });
+});
+
+ipcMain.handle('open-cash-drawer', async () => {
+  // Send ESC/POS command to open drawer
+  const device = new escpos.USB();
+  device.open(() => {
+    device.write(Buffer.from([0x1B, 0x70, 0x00, 0x19, 0xFA]));
+    device.close();
+  });
+});
+```
+
+### 3.2 Renderer (Next.js)
+```typescript
+// apps/pos/src/lib/hardware.ts
+export async function printReceipt(order: Order) {
+  if (window.electron) {
+    await window.electron.ipcRenderer.invoke('print-receipt', {
+      header: `Order #${order.id}`,
+      items: order.items.map(i => `${i.name} x${i.quantity}`).join('\n'),
+    });
+  }
+}
+
+export async function openCashDrawer() {
+  if (window.electron) {
+    await window.electron.ipcRenderer.invoke('open-cash-drawer');
+  }
+}
+```
+
+---
+
+## 💼 Step 4: SaaS Governance
+
+### 4.1 Subscription Management
+```typescript
+// packages/core/src/services/subscriptions.ts
+export async function getActivePlan(tenantId: string) {
+  const { data } = await supabase
+    .from('tenant_subscriptions')
+    .select('*, subscription_plans(*)')
+    .eq('tenant_id', tenantId)
+    .eq('status', 'active')
+    .single();
+  
+  return data;
+}
+
+export async function checkLimit(tenantId: string, limitKey: string) {
+  const { data } = await supabase.rpc('get_tenant_limit', {
+    p_tenant_id: tenantId,
+    p_limit_key: limitKey,
+  });
+  
+  return data;
+}
+```
+
+### 4.2 Feature Flags
+```typescript
+export async function hasFeature(tenantId: string, featureKey: string) {
+  const { data } = await supabase.rpc('has_feature_access', {
+    p_tenant_id: tenantId,
+    p_feature_key: featureKey,
+  });
+  
+  return data;
+}
+
+// Usage in UI
+const canUseAPI = await hasFeature(tenantId, 'api_access');
+if (!canUseAPI) {
+  return <UpgradePrompt feature="API Access" />;
+}
+```
+
+### 4.3 Limit Enforcement (RLS)
+```sql
+-- Example: profiles INSERT policy with limit check
+CREATE POLICY "Owners can create profiles" ON profiles FOR INSERT
+WITH CHECK (
+    tenant_id = auth.get_tenant_id() AND 
+    auth.get_role() = 'owner' AND
+    (SELECT validate_tenant_limit(auth.get_tenant_id(), 'profiles')) IS NULL
+);
+```
+
+---
+
+## 🧪 Step 5: Verification
+
+### 5.1 Offline Sync Test
+```typescript
+// Simulate offline mode
+await db.disconnectAndClear();
+
+// Create order locally
+await db.execute(
+  'INSERT INTO orders (id, tenant_id, total) VALUES (?, ?, ?)',
+  [uuid(), tenantId, 100]
+);
+
+// Reconnect and verify sync
+await db.connect(/* ... */);
+await db.waitForReady();
+
+// Check if order synced to Supabase
+const { data } = await supabase.from('orders').select('*').eq('id', orderId);
+expect(data).toBeDefined();
+```
+
+### 5.2 Hardware Integration Test
+```typescript
+// Test printer
+await printReceipt({
+  id: 'TEST-001',
+  items: [{ name: 'Test Product', quantity: 1 }],
+});
+
+// Test cash drawer
+await openCashDrawer();
+```
+
+### 5.3 Subscription Limit Test
+```sql
+-- Set tenant to Free plan (max 3 users)
+UPDATE tenant_subscriptions SET plan_id = 'free-plan-id' WHERE tenant_id = 'test-tenant';
+
+-- Try to create 4th user (should fail)
+INSERT INTO profiles (tenant_id, full_name) VALUES ('test-tenant', 'User 4');
+-- Expected: ERROR: Subscription limit exceeded: max_users (limit: 3, current: 3)
+```
+
+---
+
+## ✅ Checklist
+
+- [ ] Turborepo initialized
+- [ ] Supabase project created
+- [ ] PowerSync service configured
+- [ ] Sync rules deployed
+- [ ] Electron wrapper built
+- [ ] Hardware APIs tested (printer, scanner, drawer)
+- [ ] SaaS tables created (plans, subscriptions, feature_flags)
+- [ ] Limit validation functions deployed
+- [ ] RLS policies updated with limit checks
+- [ ] Offline sync verified
+- [ ] Subscription upgrade flow tested

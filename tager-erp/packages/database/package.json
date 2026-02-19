@@ -1,0 +1,20 @@
+{
+    "name": "@tager/database",
+    "version": "1.0.0",
+    "private": true,
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsc --watch",
+        "generate:types": "supabase gen types typescript --local > src/types_db.ts"
+    },
+    "dependencies": {
+        "@supabase/supabase-js": "^2.39.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.11.0",
+        "supabase": "^1.145.0",
+        "typescript": "^5.3.3"
+    }
+}

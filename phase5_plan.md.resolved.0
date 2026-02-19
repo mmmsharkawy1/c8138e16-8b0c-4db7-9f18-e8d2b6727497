@@ -1,0 +1,346 @@
+# Phase 5: Monorepo & Core Infrastructure Setup
+
+**Objective**: Transform the database design (Phases 1-4) into a working, deployable system with Supabase backend and TypeScript Core package.
+
+---
+
+## Prerequisites (Completed ✅)
+- [x] Domain Model defined
+- [x] Database Schema designed
+- [x] RLS Policies implemented
+- [x] Core Functions with tenant validation
+- [x] Schema optimizations (unit_id in reservations, JWT-cached roles)
+
+---
+
+## Phase 5 Roadmap
+
+### **Step 1: Monorepo Initialization** 🏗️
+
+#### 1.1 Setup Turborepo
+```bash
+# Initialize monorepo
+npx create-turbo@latest
+
+# Structure:
+# /apps
+#   /admin      - SaaS owner dashboard
+#   /dashboard  - Merchant management UI
+#   /pos        - Offline-first POS PWA
+#   /storefront - B2B customer portal
+# /packages
+#   /core       - Database client, business logic, event bus
+#   /shared     - Zod schemas, TypeScript types, constants
+#   /ui         - Shadcn components (no business logic)
+```
+
+#### 1.2 Install Core Dependencies
+```bash
+# Core package dependencies
+cd packages/core
+pnpm add @supabase/supabase-js zod date-fns
+
+# Shared package
+cd ../shared
+pnpm add zod
+
+# UI package
+cd ../ui
+pnpm add @radix-ui/react-* class-variance-authority tailwindcss
+```
+
+---
+
+### **Step 2: Supabase Project Setup** ☁️
+
+#### 2.1 Create Supabase Project
+- Navigate to [supabase.com](https://supabase.com)
+- Create new project
+- Note: `Project URL`, `anon key`, `service_role key`
+
+#### 2.2 Apply Database Schema
+```sql
+-- Run in Supabase SQL Editor (in order):
+1. core_schema.sql
+2. rls_policies.sql
+3. core_functions.sql
+```
+
+#### 2.3 Configure Authentication
+```sql
+-- Enable Email/Password auth
+-- Configure JWT settings:
+-- - JWT expiry: 3600 (1 hour)
+-- - Add custom claims: tenant_id, role_key
+
+-- Example JWT payload structure:
+{
+  "sub": "user-uuid",
+  "email": "user@example.com",
+  "app_metadata": {
+    "tenant_id": "tenant-uuid",
+    "role_key": "owner"
+  }
+}
+```
+
+#### 2.4 Setup Environment Variables
+```bash
+# .env.local (root)
+NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJxxx...
+SUPABASE_SERVICE_ROLE_KEY=eyJxxx...
+```
+
+---
+
+### **Step 3: Core Package Development** 📦
+
+#### 3.1 Database Client (`packages/core/src/db/client.ts`)
+```typescript
+import { createClient } from '@supabase/supabase-js';
+
+export const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+export const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
+```
+
+#### 3.2 Type Definitions (`packages/shared/src/types/database.ts`)
+```typescript
+// Generate from Supabase CLI:
+npx supabase gen types typescript --project-id xxx > types/database.ts
+
+// Or define manually:
+export type Tenant = {
+  id: string;
+  name: string;
+  subdomain: string | null;
+  settings: Record<string, any>;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Product = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description: string | null;
+  type_key: string;
+  category_id: string | null;
+  metadata: Record<string, any>;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+
+// ... (repeat for all tables)
+```
+
+#### 3.3 Core Services (`packages/core/src/services/`)
+
+**Inventory Service** (`inventory.service.ts`):
+```typescript
+import { supabaseAdmin } from '../db/client';
+
+export async function adjustStock(params: {
+  tenantId: string;
+  variantId: string;
+  locationId: string;
+  unitId: string;
+  quantity: number;
+  typeKey: 'sale' | 'adjustment' | 'transfer' | 'return';
+  reason?: string;
+  referenceId?: string;
+}) {
+  const { data, error } = await supabaseAdmin.rpc('adjust_stock', {
+    p_tenant_id: params.tenantId,
+    p_variant_id: params.variantId,
+    p_location_id: params.locationId,
+    p_unit_id: params.unitId,
+    p_quantity: params.quantity,
+    p_type_key: params.typeKey,
+    p_reason: params.reason,
+    p_reference_id: params.referenceId,
+  });
+
+  if (error) throw error;
+  return data;
+}
+```
+
+**Order Service** (`order.service.ts`):
+```typescript
+export async function createOrder(params: {
+  tenantId: string;
+  locationId: string;
+  customerId: string;
+  items: Array<{
+    variant_id: string;
+    unit_id: string;
+    quantity: number;
+    unit_price: number;
+  }>;
+  metadata?: Record<string, any>;
+}) {
+  const { data, error } = await supabaseAdmin.rpc('create_order', {
+    p_tenant_id: params.tenantId,
+    p_location_id: params.locationId,
+    p_customer_id: params.customerId,
+    p_items: params.items,
+    p_metadata: params.metadata || {},
+  });
+
+  if (error) throw error;
+  return data; // Returns order_id
+}
+```
+
+#### 3.4 Event Bus (`packages/core/src/events/bus.ts`)
+```typescript
+import { supabase } from '../db/client';
+
+export function subscribeToEvents(
+  tenantId: string,
+  eventType: string,
+  callback: (payload: any) => void
+) {
+  return supabase
+    .channel(`events:${tenantId}:${eventType}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'event_log',
+        filter: `tenant_id=eq.${tenantId},event_type=eq.${eventType}`,
+      },
+      (payload) => callback(payload.new)
+    )
+    .subscribe();
+}
+```
+
+---
+
+### **Step 4: Authentication & RBAC** 🔐
+
+#### 4.1 Auth Hooks (`packages/core/src/auth/hooks.ts`)
+```typescript
+import { supabase } from '../db/client';
+
+export async function signIn(email: string, password: string) {
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function getCurrentUser() {
+  const { data: { user } } = await supabase.auth.getUser();
+  return user;
+}
+
+export async function getTenantId(): Promise<string | null> {
+  const user = await getCurrentUser();
+  return user?.app_metadata?.tenant_id || null;
+}
+
+export async function getUserRole(): Promise<string | null> {
+  const user = await getCurrentUser();
+  return user?.app_metadata?.role_key || null;
+}
+```
+
+#### 4.2 Permission Guards
+```typescript
+export function canManageCatalog(role: string): boolean {
+  return ['owner', 'manager'].includes(role);
+}
+
+export function canCreateOrders(role: string): boolean {
+  return ['owner', 'manager', 'cashier'].includes(role);
+}
+
+export function canDeleteOrders(role: string): boolean {
+  return role === 'owner';
+}
+```
+
+---
+
+### **Step 5: Initial Testing** 🧪
+
+#### 5.1 Unit Tests for Core Functions
+```typescript
+// packages/core/tests/inventory.test.ts
+import { describe, it, expect } from 'vitest';
+import { adjustStock } from '../src/services/inventory.service';
+
+describe('Inventory Service', () => {
+  it('should adjust stock and log movement', async () => {
+    const result = await adjustStock({
+      tenantId: 'test-tenant',
+      variantId: 'test-variant',
+      locationId: 'test-location',
+      unitId: 'test-unit',
+      quantity: 10,
+      typeKey: 'adjustment',
+      reason: 'Initial stock',
+    });
+    
+    expect(result).toBeDefined();
+  });
+});
+```
+
+#### 5.2 RLS Policy Tests
+```sql
+-- Test tenant isolation
+-- Run as User A (tenant_id = 'tenant-a')
+SELECT * FROM products; -- Should only see tenant-a products
+
+-- Run as User B (tenant_id = 'tenant-b')
+SELECT * FROM products; -- Should only see tenant-b products
+
+-- Attempt cross-tenant access
+SELECT * FROM products WHERE tenant_id = 'tenant-a'; -- Should return empty
+```
+
+---
+
+## Verification Checklist
+
+- [ ] Monorepo structure created
+- [ ] Supabase project configured
+- [ ] Database schema applied successfully
+- [ ] RLS policies enabled and tested
+- [ ] Core package with database client
+- [ ] Type definitions generated
+- [ ] Inventory service implemented
+- [ ] Order service implemented
+- [ ] Event bus functional
+- [ ] Authentication working
+- [ ] RBAC guards implemented
+- [ ] Unit tests passing
+- [ ] RLS isolation verified
+
+---
+
+## Next Steps (Phase 6)
+
+After Phase 5 completion:
+1. Build Dashboard UI (apps/dashboard)
+2. Implement POS offline-first logic
+3. Create B2B Storefront
+4. Add Tax & Localization modules
+5. Deploy to production

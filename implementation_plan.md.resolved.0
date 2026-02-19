@@ -1,0 +1,49 @@
+# Implementation Plan: Multi-tenant SaaS for Wholesalers
+
+Building a robust, scalable SaaS platform for wholesalers including a Storefront, POS, Merchant Dashboard, and Super Admin Panel.
+
+## Proposed Architecture
+
+### Multi-tenancy Strategy
+- **Shared Database, Isolated Schemas (or `tenant_id` filtering)**: We will use a `tenant_id` column for most tables to ensure data isolation.
+- **Routing**: Subdomain-based (e.g., `merchant1.saas.com`) or path-based (e.g., `saas.com/merchant1`).
+
+### Technology Stack
+- **Frontend**: Next.js 14+ (App Router) for SEO-friendly storefronts and fast dashboards.
+- **UI Components**: Shadcn UI + Lucide Icons for a premium feel.
+- **Database/Auth**: Supabase (PostgreSQL) for rapid multi-tenant development, Auth, and Real-time POS updates.
+- **Styling**: Vanilla CSS / Tailwind (if needed for speed).
+
+## Proposed Components
+
+### 1. Super Admin Dashboard [Owner]
+- Manage merchants (onboarding, suspension).
+- Monitor system-wide analytics.
+- Subscription management.
+
+### 2. Merchant Dashboard [Wholesaler]
+- Inventory management.
+- Order management.
+- Sales reports.
+- Store setup (logo, theme).
+
+### 3. POS (Point of Sale)
+- Barcode scanning integration.
+- Quick product selection.
+- Receipt generation.
+- Offline support (Service Workers).
+
+### 4. Merchant Storefront
+- Product catalog.
+- Shopping cart.
+- Customer accounts.
+
+## Verification Plan
+
+### Automated Tests
+- Multi-tenancy isolation tests (Ensure Merchant A cannot see Merchant B's data).
+- Auth flow validation.
+
+### Manual Verification
+- Testing the POS flow with simulated hardware.
+- UI responsiveness on mobile devices.

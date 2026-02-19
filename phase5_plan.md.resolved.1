@@ -1,0 +1,227 @@
+# Phase 5: Monorepo & Core Infrastructure Setup
+
+## 📋 Overview
+
+| Item | Value |
+|------|-------|
+| **Objective** | تحويل تصميم قاعدة البيانات إلى نظام قابل للتشغيل |
+| **Duration** | 3-5 أيام |
+| **Tech Stack** | Turborepo, Next.js 14, Supabase, TypeScript |
+
+---
+
+## 🗂️ Step 1: Monorepo Setup
+
+### 1.1 Initialize Turborepo
+```bash
+npx create-turbo@latest wholesale-platform
+cd wholesale-platform
+```
+
+### 1.2 Directory Structure
+```
+wholesale-platform/
+├── apps/
+│   ├── dashboard/     # Merchant Management (Next.js)
+│   ├── pos/           # Offline-first POS (Next.js PWA)
+│   └── storefront/    # B2B Portal (Next.js)
+├── packages/
+│   ├── core/          # Business Logic & Supabase Client
+│   ├── shared/        # Types, Schemas, Constants
+│   └── ui/            # Shared Components
+├── supabase/          # Database migrations & seed
+└── turbo.json
+```
+
+### 1.3 Create Packages
+```bash
+mkdir -p packages/core packages/shared packages/ui
+mkdir -p supabase/migrations supabase/seed
+```
+
+---
+
+## ☁️ Step 2: Supabase Project
+
+### 2.1 Create Project
+1. Go to [supabase.com](https://supabase.com)
+2. Create new project
+3. Save credentials:
+   - `Project URL`
+   - `anon key`
+   - `service_role key`
+
+### 2.2 Apply Schema
+```bash
+# Copy SQL files to migrations folder
+cp core_schema.sql supabase/migrations/001_schema.sql
+cp rls_policies.sql supabase/migrations/002_rls.sql
+cp core_functions.sql supabase/migrations/003_functions.sql
+
+# Apply via Supabase CLI
+supabase db push
+```
+
+### 2.3 Environment Variables
+```bash
+# .env.local
+NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
+SUPABASE_SERVICE_ROLE_KEY=eyJ...
+```
+
+---
+
+## 📦 Step 3: Core Package
+
+### 3.1 Package Structure
+```
+packages/core/
+├── src/
+│   ├── db/
+│   │   └── client.ts       # Supabase clients
+│   ├── services/
+│   │   ├── inventory.ts    # Stock operations
+│   │   ├── orders.ts       # Order management
+│   │   └── payments.ts     # Financial transactions
+│   ├── auth/
+│   │   └── index.ts        # Authentication helpers
+│   └── events/
+│       └── bus.ts          # Real-time subscriptions
+├── package.json
+└── tsconfig.json
+```
+
+### 3.2 Key Files
+
+**Database Client** (`db/client.ts`):
+```typescript
+import { createClient } from '@supabase/supabase-js';
+import type { Database } from '@shared/types';
+
+export const supabase = createClient<Database>(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+```
+
+**Inventory Service** (`services/inventory.ts`):
+```typescript
+export async function adjustStock(params: AdjustStockParams) {
+  return supabase.rpc('adjust_stock', {
+    p_tenant_id: params.tenantId,
+    p_variant_id: params.variantId,
+    p_location_id: params.locationId,
+    p_unit_id: params.unitId,
+    p_quantity: params.quantity,
+    p_type_key: params.typeKey,
+  });
+}
+```
+
+---
+
+## 🔐 Step 4: Authentication
+
+### 4.1 Sign Up Flow (New Tenant)
+```typescript
+async function signUpWithTenant(email: string, password: string, tenantName: string) {
+  // 1. Create tenant
+  const { data: tenant } = await supabaseAdmin
+    .from('tenants')
+    .insert({ name: tenantName })
+    .select()
+    .single();
+
+  // 2. Create user with tenant metadata
+  const { data: user } = await supabaseAdmin.auth.admin.createUser({
+    email,
+    password,
+    app_metadata: {
+      tenant_id: tenant.id,
+      role_key: 'owner',
+    },
+  });
+
+  // 3. Create profile
+  await supabaseAdmin.from('profiles').insert({
+    id: user.id,
+    tenant_id: tenant.id,
+    role_key: 'owner',
+    full_name: email.split('@')[0],
+  });
+
+  return { tenant, user };
+}
+```
+
+### 4.2 Sign In Flow
+```typescript
+async function signIn(email: string, password: string) {
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
+  if (error) throw error;
+  return data;
+}
+```
+
+---
+
+## 📡 Step 5: Real-time Events
+
+### 5.1 Event Subscription
+```typescript
+function subscribeToOrders(tenantId: string, callback: (order: Order) => void) {
+  return supabase
+    .channel(`orders:${tenantId}`)
+    .on('postgres_changes', {
+      event: 'INSERT',
+      schema: 'public',
+      table: 'orders',
+      filter: `tenant_id=eq.${tenantId}`,
+    }, (payload) => callback(payload.new as Order))
+    .subscribe();
+}
+```
+
+---
+
+## 🧪 Step 6: Verification
+
+### 6.1 RLS Tests
+```sql
+-- Test: User A cannot see User B data
+SET LOCAL jwt.claims.app_metadata = '{"tenant_id": "tenant-a"}';
+SELECT * FROM products; -- Should only return tenant-a products
+```
+
+### 6.2 Function Tests
+```typescript
+describe('create_order', () => {
+  it('should reject if insufficient stock', async () => {
+    await expect(createOrder({
+      tenantId: 'test',
+      locationId: 'loc1',
+      customerId: 'cust1',
+      items: [{ variant_id: 'v1', unit_id: 'u1', quantity: 9999, unit_price: 10 }]
+    })).rejects.toThrow('Insufficient');
+  });
+});
+```
+
+---
+
+## ✅ Checklist
+
+- [ ] Turborepo initialized
+- [ ] Supabase project created
+- [ ] Schema applied (3 migrations)
+- [ ] Core package structure
+- [ ] Database client working
+- [ ] Services implemented
+- [ ] Auth flow complete
+- [ ] Event bus functional
+- [ ] RLS verified
+- [ ] Unit tests passing

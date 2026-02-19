@@ -1,0 +1,153 @@
+# Feature Dependencies
+
+## Overview
+This document maps dependencies between features to ensure correct implementation order.
+
+---
+
+## Dependency Graph
+
+```
+Phase 0: Foundation
+├── Supabase Auth Setup
+├── Multi-Tenant RLS
+└── Core Schema
+
+Phase 1: Onboarding
+├── Niche Templates (Depends: Core Schema)
+├── Tenant Settings (Depends: Niche Templates)
+└── Onboarding Wizard UI (Depends: Tenant Settings)
+
+Phase 2: Catalog
+├── Products (Depends: Niche Templates)
+├── Product Variants (Depends: Products)
+├── Unit Definitions (Depends: Product Variants)
+└── Product Bundles (Depends: Product Variants)
+
+Phase 3: Inventory
+├── Locations (Depends: Core Schema)
+├── Stock Levels (Depends: Product Variants, Locations, Unit Definitions)
+├── Stock Movements (Depends: Stock Levels)
+└── Stock Reservations (Depends: Stock Levels, Unit Definitions)
+
+Phase 4: Sales
+├── Orders (Depends: Stock Levels, Customers)
+├── Order Items (Depends: Orders, Product Variants)
+├── Bundle Sales (Depends: Product Bundles, Stock Levels)
+└── Payments (Depends: Orders)
+
+Phase 5: Offline POS
+├── PowerSync Setup (Depends: All Core Tables)
+├── Electron Wrapper (Depends: PowerSync)
+└── Hardware Integration (Depends: Electron)
+```
+
+---
+
+## Feature Dependency Matrix
+
+| Feature | Depends On | Blocks | Status |
+|---------|-----------|--------|--------|
+| **Core Schema** | None | Everything | ✅ Complete |
+| **RLS Policies** | Core Schema | Data Access | ✅ Complete |
+| **Supabase Auth** | None | User Management | ✅ Approved |
+| **Niche Templates** | Core Schema | Onboarding Wizard | ✅ Complete |
+| **Tenant Settings** | Niche Templates | Product Schema | ✅ Complete |
+| **Product Bundles** | Product Variants | Bundle Sales | ✅ Complete |
+| **Unit Definitions** | Product Variants | Stock Levels | ✅ Complete |
+| **Stock Reservations** | Stock Levels, Unit Definitions | Order Creation | ✅ Complete |
+| **SaaS Governance** | Core Schema | Subscription Limits | ✅ Complete |
+| **Bundle Sales Function** | Product Bundles, Stock Functions | POS | ✅ Complete |
+| **Onboarding Wizard UI** | Niche Templates, Tenant Settings | First Login | 📋 Planned |
+| **PowerSync** | All Core Tables | Offline POS | 📋 Planned |
+| **Electron Wrapper** | PowerSync | Hardware Integration | 📋 Planned |
+| **ETA Integration** | Orders, Payments | Tax Compliance | 🔜 Phase 3 |
+
+---
+
+## Critical Path
+
+### Must Complete Before Phase 5:
+1. ✅ Core Schema with all tables
+2. ✅ SaaS Governance (subscription_plans, feature_flags)
+3. ✅ RLS Policies with limit enforcement
+4. ✅ Core Functions (adjust_stock, create_order, etc.)
+6. ✅ Niche Templates (seed data)
+
+### Phase 5 Prerequisites:
+1. Supabase Project Creation
+2. Schema Deployment (all 6 SQL files)
+3. PowerSync Instance Provisioning
+4. Turborepo Setup
+
+---
+
+## Feature-to-File Mapping
+
+| Feature | Schema | Functions | RLS | UI | Tests |
+|---------|--------|-----------|-----|----|----|
+| Niche Templates | core_schema.sql | - | - | Onboarding Wizard | ⏳ |
+| Product Bundles | core_schema.sql | bundle_functions.sql | - | Bundle Manager | ⏳ |
+| Stock Reservations | core_schema.sql | core_functions.sql | rls_policies.sql | POS Cart | ⏳ |
+| Subscription Limits | core_schema.sql | saas_governance.sql | rls_policies.sql | Upgrade Modal | ⏳ |
+| Offline Sync | - | - | - | PowerSync Config | ⏳ |
+
+---
+
+## External Dependencies
+
+### Required Services:
+- **Supabase:** Database, Auth, Realtime, Storage
+- **PowerSync:** Offline sync engine (requires separate instance)
+- **Electron:** Desktop wrapper (npm package)
+
+### Optional Integrations:
+- **ETA API:** Egyptian Tax Authority (Phase 3)
+- **Payment Gateways:** Stripe/Fawry (Phase 4)
+- **WhatsApp Business API:** Notifications (Phase 4)
+
+---
+
+## Blocking Issues
+
+### Current Blockers: None ✅
+
+### Potential Future Blockers:
+1. **PowerSync Instance:** Requires provisioning before POS development
+2. **Supabase Project:** Must be created before schema deployment
+3. **MFA Configuration:** Requires Supabase Dashboard access
+
+---
+
+## Implementation Order (Recommended)
+
+### Week 1: Infrastructure
+1. Create Supabase Project
+2. Deploy all SQL files
+3. Configure Auth + MFA
+4. Provision PowerSync instance
+
+### Week 2: Core UI
+1. Onboarding Wizard (Niche Selection)
+2. Product Management (with JSONB attributes)
+3. Bundle Configuration UI
+
+### Week 3: POS
+1. PowerSync integration
+2. Electron wrapper
+3. Hardware integration (printers, scanners)
+
+### Week 4: Testing
+1. Offline sync testing
+2. Bundle sales testing
+3. Subscription limit testing
+4. Load testing
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-02-05 | Initial dependency map |
+| 2.0 | 2026-02-09 | Added niche templates, bundles, TAGER requirements |

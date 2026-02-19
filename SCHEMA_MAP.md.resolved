@@ -1,0 +1,223 @@
+# Database Schema Map
+
+## Overview
+Complete mapping of TAGER ERP database schema with relationships and constraints.
+
+---
+
+## Schema Layers
+
+### 1. SaaS Governance Layer
+```
+tenants
+├── subscription_plans
+├── tenant_subscriptions
+├── feature_flags
+└── tenant_settings (Niche Configuration)
+```
+
+### 2. Niche Templates Layer
+```
+niche_templates (Seeded Data)
+└── tenant_settings (References niche_type)
+```
+
+### 3. Identity & Access Layer
+```
+tenants
+└── profiles (Maps to auth.users)
+```
+
+### 4. Catalog Layer
+```
+tenants
+├── categories (Hierarchical)
+├── products
+│   ├── product_variants
+│   │   ├── unit_definitions (Multi-unit)
+│   │   └── product_bundles (Parent-Child)
+└── customers
+```
+
+### 5. Inventory Layer
+```
+tenants
+├── locations
+├── stock_levels (Current quantities)
+├── stock_movements (Audit trail)
+└── stock_reservations (Pending orders)
+```
+
+### 6. Sales & Financial Layer
+```
+tenants
+├── orders
+│   └── order_items
+├── payments
+└── event_log (Audit trail)
+```
+
+---
+
+## Table Details
+
+### Core Tables
+
+#### `tenants`
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| id | UUID | PK | Auto-generated |
+| name | TEXT | NOT NULL | Tenant display name |
+| subdomain | TEXT | UNIQUE | For custom domains |
+| settings | JSONB | DEFAULT '{}' | Tenant preferences |
+| is_active | BOOLEAN | DEFAULT TRUE | Suspension flag |
+
+#### `subscription_plans`
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| id | UUID | PK | Plan identifier |
+| name | TEXT | NOT NULL | 'Free', 'Silver', 'Gold' |
+| max_users | INTEGER | | User limit |
+| max_locations | INTEGER | | Branch limit |
+| max_products | INTEGER | | SKU limit |
+| features | JSONB | DEFAULT '{}' | Feature flags |
+
+#### `niche_templates`
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| id | UUID | PK | Template ID |
+| niche_type | TEXT | UNIQUE, NOT NULL | 'clothing', 'auto_parts', 'fmcg' |
+| display_name | TEXT | NOT NULL | UI label |
+| product_schema | JSONB | NOT NULL | Dynamic field definitions |
+
+**Seed Data:**
+- Clothing: `{color, size, material}`
+- Auto Parts: `{part_number, car_model, engine_type}`
+- FMCG: `{expiry_date, batch_number, brand}`
+
+#### `tenant_settings`
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| tenant_id | UUID | PK, FK → tenants | One per tenant |
+| niche_type | TEXT | FK → niche_templates | Selected business type |
+| onboarding_completed | BOOLEAN | DEFAULT FALSE | Wizard status |
+| custom_fields | JSONB | DEFAULT '{}' | Overrides |
+
+#### `products`
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| id | UUID | PK | Product ID |
+| tenant_id | UUID | FK → tenants | Isolation |
+| name | TEXT | NOT NULL | Product name |
+| type_key | TEXT | NOT NULL | Business type |
+| metadata | JSONB | DEFAULT '{}' | Dynamic attributes |
+| deleted_at | TIMESTAMPTZ | | Soft delete |
+
+#### `product_variants`
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| id | UUID | PK | Variant ID |
+| product_id | UUID | FK → products | Parent product |
+| sku | TEXT | UNIQUE | Stock keeping unit |
+| attributes | JSONB | DEFAULT '{}' | Size, color, etc. |
+| price | NUMERIC(15,2) | | Selling price |
+
+#### `product_bundles` ⭐ NEW
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| id | UUID | PK | Bundle ID |
+| tenant_id | UUID | FK → tenants | Isolation |
+| parent_variant_id | UUID | FK → product_variants | Bundle SKU |
+| child_variant_id | UUID | FK → product_variants | Component SKU |
+| quantity | NUMERIC(15,4) | NOT NULL | Units per bundle |
+| UNIQUE | (tenant_id, parent_variant_id, child_variant_id) | | No duplicates |
+
+**Example:**
+```
+Parent: "Mixed Sizes Set" (SKU: SET-001)
+├── Child: "T-Shirt Large" × 2
+├── Child: "T-Shirt Medium" × 4
+└── Child: "T-Shirt Small" × 6
+```
+
+#### `stock_levels`
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| variant_id | UUID | FK → product_variants | SKU |
+| location_id | UUID | FK → locations | Warehouse/Branch |
+| unit_id | UUID | FK → unit_definitions | Piece/Carton |
+| quantity | NUMERIC(15,4) | NOT NULL | Current stock |
+| UNIQUE | (tenant_id, variant_id, location_id, unit_id) | | One record per combo |
+
+#### `stock_reservations`
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| variant_id | UUID | FK → product_variants | Reserved SKU |
+| location_id | UUID | FK → locations | Where reserved |
+| unit_id | UUID | FK → unit_definitions | ⭐ NEW |
+| order_id | UUID | | Linked order |
+| quantity | NUMERIC(15,4) | NOT NULL | Reserved qty |
+| expires_at | TIMESTAMPTZ | | Auto-release time |
+
+---
+
+## Relationships
+
+### Multi-Tenant Isolation
+**Every table** (except `niche_templates` and `subscription_plans`) has:
+- `tenant_id UUID REFERENCES tenants(id) NOT NULL`
+- RLS Policy: `tenant_id = auth.get_tenant_id()`
+
+### Hierarchical Relationships
+```
+tenants (1)
+  ├──→ (N) products
+  │     └──→ (N) product_variants
+  │           ├──→ (N) unit_definitions
+  │           ├──→ (N) product_bundles (as parent)
+  │           ├──→ (N) product_bundles (as child)
+  │           └──→ (N) stock_levels
+  └──→ (N) locations
+        └──→ (N) stock_levels
+```
+
+---
+
+## Indexes
+
+### Performance Indexes
+```sql
+-- Multi-tenant queries
+CREATE INDEX idx_products_tenant ON products(tenant_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_variants_tenant ON product_variants(tenant_id);
+CREATE INDEX idx_stock_tenant_location ON stock_levels(tenant_id, location_id);
+
+-- Bundle lookups
+CREATE INDEX idx_bundles_parent ON product_bundles(parent_variant_id);
+CREATE INDEX idx_bundles_child ON product_bundles(child_variant_id);
+
+-- JSONB searches
+CREATE INDEX idx_products_metadata ON products USING GIN(metadata);
+CREATE INDEX idx_variants_attributes ON product_variants USING GIN(attributes);
+```
+
+---
+
+## SQL Execution Order
+
+When deploying schema:
+```bash
+1. core_schema.sql          # Base tables + SaaS + Niches + Bundles
+2. seed_niche_templates.sql # Populate niche options
+3. saas_governance.sql      # Subscription helpers
+4. rls_policies.sql         # Security policies
+5. core_functions.sql       # Inventory & order functions
+6. bundle_functions.sql     # Bundle sales logic
+```
+
+---
+
+## Schema Version
+**Current Version:** 2.0.0  
+**Last Updated:** 2026-02-09  
+**Changes:** Added niche_templates, tenant_settings, product_bundles, unit_id to stock_reservations

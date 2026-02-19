@@ -1,0 +1,16 @@
+# Task: Multi-tenant SaaS for Wholesalers
+
+- [/] Planning & Architecture
+    - [/] Create initial project structure
+    - [ ] Design multi-tenancy database schema
+    - [ ] Define technology stack and design system
+- [ ] Core Infrastructure
+    - [ ] Setup authentication & Multi-tenant routing
+    - [ ] Implementation of Super Admin Dashboard (Owner)
+    - [ ] Implementation of Merchant Dashboard (Wholesaler)
+- [ ] Features
+    - [ ] Storefront implementation (Customer facing)
+    - [ ] POS/Cashier system implementation
+- [ ] Verification & Deployment
+    - [ ] Test multi-tenant isolation
+    - [ ] Final walkthrough and polish

@@ -1,0 +1,5 @@
+{
+  "artifactType": "ARTIFACT_TYPE_OTHER",
+  "summary": "Feature dependency graph showing prerequisites, blockers, and implementation order for all TAGER ERP features. Maps technical dependencies between database schema, functions, UI components, and external services.",
+  "updatedAt": "2026-02-09T14:10:00.969732800Z"
+}

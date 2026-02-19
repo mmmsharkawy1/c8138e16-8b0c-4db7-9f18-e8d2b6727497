@@ -1,0 +1,5 @@
+{
+  "artifactType": "ARTIFACT_TYPE_WALKTHROUGH",
+  "summary": "Step-by-step guide for deploying SQL migrations in the correct order to avoid Supabase permission errors",
+  "updatedAt": "2026-02-17T15:25:00.799562600Z"
+}
