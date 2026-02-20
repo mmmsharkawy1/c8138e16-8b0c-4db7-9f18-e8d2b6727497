@@ -311,3 +311,76 @@ USING (tenant_id = public.get_tenant_id());
 CREATE POLICY "Product bundles manageable by management" ON product_bundles FOR ALL
 USING (tenant_id = public.get_tenant_id() AND public.get_role() IN ('owner', 'manager'))
 WITH CHECK (tenant_id = public.get_tenant_id());
+
+--------------------------------------------------------------------------------
+-- 13. CUSTOMER GROUPS (CRM Extension)
+--------------------------------------------------------------------------------
+
+ALTER TABLE customer_groups ENABLE ROW LEVEL SECURITY;
+
+-- Read: Authenticated users in tenant can view customer groups
+CREATE POLICY "customer_groups_read_access"
+ON customer_groups FOR SELECT
+USING (tenant_id = public.get_tenant_id());
+
+-- Insert: Authenticated users in tenant can create customer groups
+CREATE POLICY "customer_groups_insert_access"
+ON customer_groups FOR INSERT
+WITH CHECK (tenant_id = public.get_tenant_id());
+
+-- Update: Users in tenant can update customer groups
+CREATE POLICY "customer_groups_update_access"
+ON customer_groups FOR UPDATE
+USING (tenant_id = public.get_tenant_id())
+WITH CHECK (tenant_id = public.get_tenant_id());
+
+-- Delete: Users in tenant can delete customer groups
+CREATE POLICY "customer_groups_delete_access"
+ON customer_groups FOR DELETE
+USING (tenant_id = public.get_tenant_id());
+
+--------------------------------------------------------------------------------
+-- 14. AUDIT LOGS (Security & Compliance)
+--------------------------------------------------------------------------------
+
+ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+
+-- Read: Admin or Manager roles only
+CREATE POLICY "audit_logs_read_access_admin_manager"
+ON audit_logs FOR SELECT
+USING (
+    tenant_id = public.get_tenant_id() 
+    AND (
+        public.get_role() IN ('admin', 'manager', 'owner')
+        OR user_id = auth.uid()
+    )
+);
+
+-- Insert: System only (via function)
+CREATE POLICY "audit_logs_insert_system"
+ON audit_logs FOR INSERT
+WITH CHECK (
+    tenant_id = public.get_tenant_id()
+);
+
+--------------------------------------------------------------------------------
+-- 15. LOGIN AUDIT (Security Monitoring)
+--------------------------------------------------------------------------------
+
+ALTER TABLE login_audit ENABLE ROW LEVEL SECURITY;
+
+-- Read: Admin only
+CREATE POLICY "login_audit_read_access_admin"
+ON login_audit FOR SELECT
+USING (
+    tenant_id = public.get_tenant_id() 
+    AND public.get_role() IN ('admin', 'owner')
+);
+
+-- Insert: System only (auto-tracked)
+CREATE POLICY "login_audit_insert_system"
+ON login_audit FOR INSERT
+WITH CHECK (
+    tenant_id = public.get_tenant_id()
+    OR tenant_id IS NULL
+);

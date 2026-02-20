@@ -82,6 +82,7 @@ CREATE TABLE profiles (
     tenant_id UUID REFERENCES tenants(id) NOT NULL,
     full_name TEXT,
     role_key TEXT NOT NULL, -- e.g., 'owner', 'manager', 'cashier'
+    timezone TEXT DEFAULT 'UTC', -- User preferred timezone (e.g., 'Africa/Cairo')
     metadata JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -374,6 +375,102 @@ CREATE INDEX IF NOT EXISTS idx_stock_reservations_variant_loc
 -- Index for stock_levels to support efficient locking in reserve_stock()
 CREATE INDEX IF NOT EXISTS idx_stock_levels_tenant_variant_loc 
     ON stock_levels(tenant_id, variant_id, location_id);
+
+--------------------------------------------------------------------------------
+-- 7. CUSTOMER GROUPS (CRM Extension)
+--------------------------------------------------------------------------------
+
+CREATE TABLE customer_groups (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID REFERENCES tenants(id) NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT customer_groups_tenant_name_unique UNIQUE (tenant_id, name)
+);
+
+CREATE INDEX idx_customer_groups_tenant_id ON customer_groups(tenant_id);
+CREATE INDEX idx_customer_groups_is_active ON customer_groups(is_active);
+
+COMMENT ON TABLE customer_groups IS 'Groups for organizing customers with similar characteristics';
+COMMENT ON COLUMN customer_groups.id IS 'Unique identifier for the customer group';
+COMMENT ON COLUMN customer_groups.tenant_id IS 'Tenant owning this customer group';
+COMMENT ON COLUMN customer_groups.name IS 'Name of the customer group';
+COMMENT ON COLUMN customer_groups.description IS 'Optional description of the customer group';
+COMMENT ON COLUMN customer_groups.is_active IS 'Whether this group is active';
+COMMENT ON COLUMN customer_groups.created_at IS 'Timestamp when the group was created';
+COMMENT ON COLUMN customer_groups.updated_at IS 'Timestamp when the group was last updated';
+
+--------------------------------------------------------------------------------
+-- 8. AUDIT LOGS (System Auditing)
+--------------------------------------------------------------------------------
+
+CREATE TABLE audit_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID REFERENCES tenants(id) NOT NULL,
+    table_name TEXT NOT NULL,
+    record_id UUID NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('INSERT', 'UPDATE', 'DELETE', 'SELECT')),
+    old_values JSONB,
+    new_values JSONB,
+    user_id UUID, -- References auth.users.id (no FK to avoid permission issues)
+    ip_address INET,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_audit_logs_tenant_id ON audit_logs(tenant_id);
+CREATE INDEX idx_audit_logs_table_name ON audit_logs(table_name);
+CREATE INDEX idx_audit_logs_record_id ON audit_logs(record_id);
+CREATE INDEX idx_audit_logs_user_id ON audit_logs(user_id);
+CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at DESC);
+CREATE INDEX idx_audit_logs_action ON audit_logs(action);
+
+COMMENT ON TABLE audit_logs IS 'System audit trail for tracking all database changes';
+COMMENT ON COLUMN audit_logs.id IS 'Unique identifier for the audit log entry';
+COMMENT ON COLUMN audit_logs.tenant_id IS 'Tenant associated with this audit entry';
+COMMENT ON COLUMN audit_logs.table_name IS 'Name of the table that was modified';
+COMMENT ON COLUMN audit_logs.record_id IS 'ID of the record that was modified';
+COMMENT ON COLUMN audit_logs.action IS 'Type of operation performed (INSERT, UPDATE, DELETE, SELECT)';
+COMMENT ON COLUMN audit_logs.old_values IS 'JSON representation of old values (for UPDATE/DELETE)';
+COMMENT ON COLUMN audit_logs.new_values IS 'JSON representation of new values (for INSERT/UPDATE)';
+COMMENT ON COLUMN audit_logs.user_id IS 'User who performed the action';
+COMMENT ON COLUMN audit_logs.ip_address IS 'IP address of the client';
+COMMENT ON COLUMN audit_logs.created_at IS 'Timestamp when the action was performed';
+
+--------------------------------------------------------------------------------
+-- 9. LOGIN AUDIT (Security Monitoring)
+--------------------------------------------------------------------------------
+
+CREATE TABLE login_audit (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID REFERENCES tenants(id),
+    user_id UUID, -- References auth.users.id (no FK to avoid permission issues)
+    email TEXT NOT NULL,
+    ip_address INET,
+    user_agent TEXT,
+    login_success BOOLEAN NOT NULL DEFAULT FALSE,
+    failure_reason TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_login_audit_tenant_id ON login_audit(tenant_id);
+CREATE INDEX idx_login_audit_user_id ON login_audit(user_id);
+CREATE INDEX idx_login_audit_email ON login_audit(email);
+CREATE INDEX idx_login_audit_created_at ON login_audit(created_at DESC);
+CREATE INDEX idx_login_audit_success ON login_audit(login_success) WHERE login_success = FALSE;
+
+COMMENT ON TABLE login_audit IS 'Audit trail for login attempts to track security events';
+COMMENT ON COLUMN login_audit.id IS 'Unique identifier for the login audit entry';
+COMMENT ON COLUMN login_audit.tenant_id IS 'Tenant associated with this login';
+COMMENT ON COLUMN login_audit.user_id IS 'User who attempted to login';
+COMMENT ON COLUMN login_audit.email IS 'Email used in login attempt';
+COMMENT ON COLUMN login_audit.ip_address IS 'IP address of the login attempt';
+COMMENT ON COLUMN login_audit.user_agent IS 'User agent string from the client';
+COMMENT ON COLUMN login_audit.login_success IS 'Whether the login was successful';
+COMMENT ON COLUMN login_audit.failure_reason IS 'Reason for login failure if applicable';
+COMMENT ON COLUMN login_audit.created_at IS 'Timestamp of the login attempt';
 
 --------------------------------------------------------------------------------
 -- ADVISORY LOCK HELPER FUNCTION

@@ -12,7 +12,7 @@
 CREATE OR REPLACE FUNCTION assert_tenant_ownership(p_tenant_id UUID)
 RETURNS VOID AS $$
 BEGIN
-    IF p_tenant_id IS DISTINCT FROM auth.get_tenant_id() THEN
+    IF p_tenant_id IS DISTINCT FROM public.get_tenant_id() THEN
         RAISE EXCEPTION 'Access denied: tenant_id mismatch. You cannot operate on data belonging to another tenant.'
             USING ERRCODE = '42501'; -- insufficient_privilege
     END IF;
@@ -60,7 +60,7 @@ BEGIN
     FROM unit_definitions ud
     JOIN product_variants pv ON ud.variant_id = pv.id
     WHERE ud.id = p_unit_id 
-      AND pv.tenant_id = auth.get_tenant_id();
+      AND pv.tenant_id = public.get_tenant_id();
     
     IF v_rate IS NULL THEN
         RAISE EXCEPTION 'Unit definition not found or access denied: %', p_unit_id;
@@ -677,3 +677,388 @@ BEGIN
     RETURN v_expired_count;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+--------------------------------------------------------------------------------
+-- 5. TIMEZONE HELPER FUNCTIONS
+--------------------------------------------------------------------------------
+
+-- Function: convert_to_user_timezone
+-- Purpose: Convert a UTC timestamp to the user's timezone
+CREATE OR REPLACE FUNCTION convert_to_user_timezone(
+    p_timestamp TIMESTAMPTZ,
+    p_timezone TEXT DEFAULT 'UTC'
+)
+RETURNS TIMESTAMPTZ AS $$
+BEGIN
+    IF p_timestamp IS NULL THEN
+        RETURN NULL;
+    END IF;
+    
+    IF p_timezone IS NULL OR p_timezone = 'UTC' THEN
+        SELECT COALESCE(
+            (SELECT timezone FROM profiles WHERE id = auth.uid()),
+            'UTC'
+        ) INTO p_timezone;
+    END IF;
+    
+    RETURN p_timestamp AT TIME ZONE p_timezone;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+COMMENT ON FUNCTION convert_to_user_timezone(TIMESTAMPTZ, TEXT) IS 
+'Converts a UTC timestamp to the specified user timezone.';
+
+-- Function: get_current_utc_time
+-- Purpose: Get the current UTC time
+CREATE OR REPLACE FUNCTION get_current_utc_time()
+RETURNS TIMESTAMPTZ AS $$
+BEGIN
+    RETURN NOW() AT TIME ZONE 'UTC';
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+COMMENT ON FUNCTION get_current_utc_time() IS 
+'Returns the current UTC timestamp.';
+
+--------------------------------------------------------------------------------
+-- 6. AUDIT SYSTEM FUNCTIONS
+--------------------------------------------------------------------------------
+
+-- Function: log_audit_action
+-- Purpose: Log an action to the audit_logs table
+CREATE OR REPLACE FUNCTION log_audit_action(
+    p_table_name TEXT,
+    p_record_id UUID,
+    p_action TEXT,
+    p_old_values JSONB DEFAULT NULL,
+    p_new_values JSONB DEFAULT NULL
+)
+RETURNS UUID AS $$
+DECLARE
+    v_audit_id UUID;
+    v_user_id UUID;
+    v_ip_address INET;
+    v_tenant_id UUID;
+BEGIN
+    v_user_id := auth.uid();
+    v_ip_address := (SELECT client_addr::inet FROM pg_stat_activity WHERE pid = pg_backend_pid());
+    v_tenant_id := public.get_tenant_id();
+    
+    IF v_tenant_id IS NULL THEN
+        SELECT tenant_id INTO v_tenant_id FROM profiles WHERE id = v_user_id;
+    END IF;
+    
+    INSERT INTO audit_logs (
+        tenant_id, table_name, record_id, action, old_values, new_values, user_id, ip_address, created_at
+    ) VALUES (
+        v_tenant_id, p_table_name, p_record_id, p_action, p_old_values, p_new_values, v_user_id, v_ip_address, NOW()
+    )
+    RETURNING id INTO v_audit_id;
+    
+    RETURN v_audit_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+COMMENT ON FUNCTION log_audit_action(TEXT, UUID, TEXT, JSONB, JSONB) IS 
+'Logs an audit action to the audit_logs table.';
+
+-- Function: audit_trigger_function
+-- Purpose: Generic audit trigger for tracking changes
+CREATE OR REPLACE FUNCTION audit_trigger_function()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_old_values JSONB;
+    v_new_values JSONB;
+    v_action TEXT;
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        v_action := 'INSERT';
+        v_old_values := NULL;
+        v_new_values := to_jsonb(NEW);
+    ELSIF TG_OP = 'UPDATE' THEN
+        v_action := 'UPDATE';
+        v_old_values := to_jsonb(OLD);
+        v_new_values := to_jsonb(NEW);
+    ELSIF TG_OP = 'DELETE' THEN
+        v_action := 'DELETE';
+        v_old_values := to_jsonb(OLD);
+        v_new_values := NULL;
+    END IF;
+    
+    PERFORM log_audit_action(
+        TG_TABLE_NAME,
+        COALESCE(NEW.id, OLD.id),
+        v_action,
+        v_old_values,
+        v_new_values
+    );
+    
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+COMMENT ON FUNCTION audit_trigger_function() IS 
+'Generic audit trigger function that logs all changes to audit_logs.';
+
+-- Function: record_login_attempt
+-- Purpose: Record a login attempt for security tracking
+CREATE OR REPLACE FUNCTION record_login_attempt(
+    p_email TEXT,
+    p_login_success BOOLEAN,
+    p_failure_reason TEXT DEFAULT NULL
+)
+RETURNS UUID AS $$
+DECLARE
+    v_login_id UUID;
+    v_user_id UUID;
+    v_tenant_id UUID;
+    v_ip_address INET;
+    v_user_agent TEXT;
+BEGIN
+    v_user_id := auth.uid();
+    v_ip_address := (SELECT client_addr::inet FROM pg_stat_activity WHERE pid = pg_backend_pid());
+    v_user_agent := current_setting('request.headers', true)::jsonb->>'user-agent';
+    
+    IF v_user_id IS NOT NULL THEN
+        SELECT tenant_id INTO v_tenant_id FROM profiles WHERE id = v_user_id;
+    END IF;
+    
+    INSERT INTO login_audit (
+        tenant_id, user_id, email, ip_address, user_agent, login_success, failure_reason, created_at
+    ) VALUES (
+        v_tenant_id, v_user_id, p_email, v_ip_address, v_user_agent, p_login_success, p_failure_reason, NOW()
+    )
+    RETURNING id INTO v_login_id;
+    
+    RETURN v_login_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+COMMENT ON FUNCTION record_login_attempt(TEXT, BOOLEAN, TEXT) IS 
+'Records a login attempt for security monitoring.';
+
+-- Function: get_tenant_audit_logs
+-- Purpose: Get audit logs for a specific tenant with filters
+CREATE OR REPLACE FUNCTION get_tenant_audit_logs(
+    p_tenant_id UUID,
+    p_table_name TEXT DEFAULT NULL,
+    p_action TEXT DEFAULT NULL,
+    p_start_date TIMESTAMPTZ DEFAULT NULL,
+    p_end_date TIMESTAMPTZ DEFAULT NULL,
+    p_limit INTEGER DEFAULT 100
+)
+RETURNS TABLE (
+    id UUID,
+    table_name TEXT,
+    record_id UUID,
+    action TEXT,
+    old_values JSONB,
+    new_values JSONB,
+    user_id UUID,
+    ip_address INET,
+    created_at TIMESTAMPTZ
+) AS $$
+BEGIN
+    PERFORM assert_tenant_ownership(p_tenant_id);
+    
+    RETURN QUERY
+    SELECT 
+        al.id, al.table_name, al.record_id, al.action, al.old_values, al.new_values, al.user_id, al.ip_address, al.created_at
+    FROM audit_logs al
+    WHERE al.tenant_id = p_tenant_id
+        AND (p_table_name IS NULL OR al.table_name = p_table_name)
+        AND (p_action IS NULL OR al.action = p_action)
+        AND (p_start_date IS NULL OR al.created_at >= p_start_date)
+        AND (p_end_date IS NULL OR al.created_at <= p_end_date)
+    ORDER BY al.created_at DESC
+    LIMIT p_limit;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Function: get_failed_login_attempts
+-- Purpose: Get failed login attempts for security analysis
+CREATE OR REPLACE FUNCTION get_failed_login_attempts(
+    p_tenant_id UUID,
+    p_hours INTEGER DEFAULT 24,
+    p_limit INTEGER DEFAULT 50
+)
+RETURNS TABLE (
+    id UUID,
+    email TEXT,
+    ip_address INET,
+    user_agent TEXT,
+    failure_reason TEXT,
+    created_at TIMESTAMPTZ,
+    attempt_count BIGINT
+) AS $$
+BEGIN
+    IF public.get_role() NOT IN ('admin', 'owner') THEN
+        RAISE EXCEPTION 'Access denied: Admin role required';
+    END IF;
+    
+    PERFORM assert_tenant_ownership(p_tenant_id);
+    
+    RETURN QUERY
+    SELECT 
+        la.id, la.email, la.ip_address, la.user_agent, la.failure_reason, la.created_at,
+        COUNT(*) OVER (PARTITION BY la.email, la.ip_address) as attempt_count
+    FROM login_audit la
+    WHERE la.tenant_id = p_tenant_id
+        AND la.login_success = FALSE
+        AND la.created_at >= NOW() - (p_hours || ' hours')::INTERVAL
+    ORDER BY la.created_at DESC
+    LIMIT p_limit;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+--------------------------------------------------------------------------------
+-- 7. ORDER MANAGEMENT FUNCTIONS
+--------------------------------------------------------------------------------
+
+-- Function: calculate_order_total
+-- Purpose: Calculate the total order amount including taxes
+CREATE OR REPLACE FUNCTION calculate_order_total(
+    p_order_id UUID
+)
+RETURNS NUMERIC(10, 2) AS $$
+DECLARE
+    v_total NUMERIC(10, 2) := 0;
+BEGIN
+    PERFORM assert_tenant_ownership(
+        (SELECT tenant_id FROM orders WHERE id = p_order_id)
+    );
+    
+    -- Use actual item-level pricing: net - discount + tax (already computed in order_items)
+    SELECT COALESCE(SUM(total_price), 0)
+    INTO v_total
+    FROM order_items
+    WHERE order_id = p_order_id;
+    
+    RETURN ROUND(v_total, 2);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+COMMENT ON FUNCTION calculate_order_total(UUID) IS 
+'Calculates the total order amount including taxes.';
+
+-- Function: update_order_status
+-- Purpose: Update order status with validation
+CREATE OR REPLACE FUNCTION update_order_status(
+    p_order_id UUID,
+    p_new_status TEXT,
+    p_tenant_id UUID
+)
+RETURNS VOID AS $$
+DECLARE
+    v_current_status TEXT;
+    v_allowed_transitions TEXT[] := ARRAY[
+        'pending->confirmed',
+        'confirmed->processing',
+        'processing->shipped',
+        'shipped->delivered',
+        'confirmed->cancelled',
+        'pending->cancelled'
+    ];
+    v_transition TEXT;
+    v_is_valid_transition BOOLEAN := FALSE;
+BEGIN
+    PERFORM assert_tenant_ownership(p_tenant_id);
+    
+    SELECT status_key INTO v_current_status
+    FROM orders
+    WHERE id = p_order_id AND tenant_id = p_tenant_id;
+    
+    IF v_current_status IS NULL THEN
+        RAISE EXCEPTION 'Order not found: %', p_order_id;
+    END IF;
+    
+    v_transition := v_current_status || '->' || p_new_status;
+    IF v_transition = ANY(v_allowed_transitions) THEN
+        v_is_valid_transition := TRUE;
+    END IF;
+    
+    IF NOT v_is_valid_transition THEN
+        IF public.get_role() NOT IN ('admin', 'owner') THEN
+            RAISE EXCEPTION 'Invalid status transition from % to %', 
+                v_current_status, p_new_status;
+        END IF;
+    END IF;
+    
+    UPDATE orders
+    SET status_key = p_new_status, updated_at = NOW()
+    WHERE id = p_order_id;
+    
+    PERFORM log_audit_action(
+        'orders', p_order_id, 'UPDATE',
+        jsonb_build_object('status_key', v_current_status),
+        jsonb_build_object('status_key', p_new_status)
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+COMMENT ON FUNCTION update_order_status(UUID, TEXT, UUID) IS 
+'Updates order status with validation.';
+
+--------------------------------------------------------------------------------
+-- 8. AUDIT TRIGGERS
+--------------------------------------------------------------------------------
+
+-- Trigger: audit_trigger_products
+DROP TRIGGER IF EXISTS audit_trigger_products ON products;
+CREATE TRIGGER audit_trigger_products
+AFTER INSERT OR UPDATE OR DELETE ON products
+FOR EACH ROW EXECUTE FUNCTION audit_trigger_function();
+
+COMMENT ON TRIGGER audit_trigger_products ON products IS 
+'Automatically logs all changes to the products table for audit purposes.';
+
+-- Trigger: audit_trigger_product_variants
+DROP TRIGGER IF EXISTS audit_trigger_product_variants ON product_variants;
+CREATE TRIGGER audit_trigger_product_variants
+AFTER INSERT OR UPDATE OR DELETE ON product_variants
+FOR EACH ROW EXECUTE FUNCTION audit_trigger_function();
+
+COMMENT ON TRIGGER audit_trigger_product_variants ON product_variants IS 
+'Automatically logs all changes to the product_variants table for audit purposes.';
+
+-- Trigger: audit_trigger_orders
+DROP TRIGGER IF EXISTS audit_trigger_orders ON orders;
+CREATE TRIGGER audit_trigger_orders
+AFTER INSERT OR UPDATE OR DELETE ON orders
+FOR EACH ROW EXECUTE FUNCTION audit_trigger_function();
+
+COMMENT ON TRIGGER audit_trigger_orders ON orders IS 
+'Automatically logs all changes to the orders table for audit purposes.';
+
+-- Trigger: audit_trigger_customers
+DROP TRIGGER IF EXISTS audit_trigger_customers ON customers;
+CREATE TRIGGER audit_trigger_customers
+AFTER INSERT OR UPDATE OR DELETE ON customers
+FOR EACH ROW EXECUTE FUNCTION audit_trigger_function();
+
+COMMENT ON TRIGGER audit_trigger_customers ON customers IS 
+'Automatically logs all changes to the customers table for audit purposes.';
+
+--------------------------------------------------------------------------------
+-- GRANT PERMISSIONS
+--------------------------------------------------------------------------------
+
+GRANT EXECUTE ON FUNCTION convert_to_user_timezone(TIMESTAMPTZ, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION get_current_utc_time() TO authenticated;
+GRANT EXECUTE ON FUNCTION log_audit_action(TEXT, UUID, TEXT, JSONB, JSONB) TO authenticated;
+GRANT EXECUTE ON FUNCTION audit_trigger_function() TO authenticated;
+GRANT EXECUTE ON FUNCTION record_login_attempt(TEXT, BOOLEAN, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION get_tenant_audit_logs(UUID, TEXT, TEXT, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) TO authenticated;
+GRANT EXECUTE ON FUNCTION get_failed_login_attempts(UUID, INTEGER, INTEGER) TO authenticated;
+GRANT EXECUTE ON FUNCTION calculate_order_total(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION update_order_status(UUID, TEXT, UUID) TO authenticated;
+
+GRANT SELECT ON customer_groups TO authenticated;
+GRANT SELECT ON audit_logs TO authenticated;
+GRANT SELECT ON login_audit TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON customer_groups TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON audit_logs TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON login_audit TO authenticated;
